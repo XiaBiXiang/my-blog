@@ -1,0 +1,84 @@
+name: Deploy to Aliyun Server
+
+on:
+  workflow_run:
+    workflows: ['Build and Push Docker Image']
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  deploy:
+    name: Deploy to Server
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' || github.event_name == 'workflow_dispatch' }}
+
+    steps:
+      - name: Deploy to Aliyun Server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            echo "🚀 开始部署..."
+
+            # 拉取最新镜像
+            echo "📥 拉取最新镜像..."
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # 停止并删除旧容器
+            echo "🛑 停止旧容器..."
+            docker stop portfolio-site 2>/dev/null || true
+            docker rm portfolio-site 2>/dev/null || true
+
+            # 启动新容器
+            echo "🚀 启动新容器..."
+            docker run -d \
+              --name portfolio-site \
+              -p 3000:3000 \
+              -e NEXT_PUBLIC_SUPABASE_URL="${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}" \
+              -e NEXT_PUBLIC_SUPABASE_ANON_KEY="${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}" \
+              -e NODE_ENV=production \
+              --restart unless-stopped \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+            # 清理旧镜像
+            echo "🧹 清理旧镜像..."
+            docker image prune -af --filter "until=24h" || true
+
+            echo "✅ 部署完成！"
+
+            # 显示容器状态
+            echo "📊 容器状态："
+            docker ps | grep portfolio-site
+
+      - name: Deployment Summary
+        if: success()
+        run: |
+          echo "## 🎉 部署成功！" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 部署信息" >> $GITHUB_STEP_SUMMARY
+          echo "- **服务器:** ${{ secrets.SERVER_HOST }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **镜像:** ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> $GITHUB_STEP_SUMMARY
+          echo "- **时间:** $(date)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 访问地址" >> $GITHUB_STEP_SUMMARY
+          echo "http://${{ secrets.SERVER_HOST }}:3000" >> $GITHUB_STEP_SUMMARY
+
+      - name: Deployment Failed
+        if: failure()
+        run: |
+          echo "## ❌ 部署失败" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "请检查：" >> $GITHUB_STEP_SUMMARY
+          echo "1. 服务器 SSH 连接是否正常" >> $GITHUB_STEP_SUMMARY
+          echo "2. Docker 是否已安装" >> $GITHUB_STEP_SUMMARY
+          echo "3. 环境变量是否正确配置" >> $GITHUB_STEP_SUMMARY
