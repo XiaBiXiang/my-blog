@@ -8,7 +8,12 @@ WORKDIR /app
 
 # 复制依赖文件
 COPY package.json package-lock.json* ./
-RUN npm ci
+
+# 配置 npm 以提高稳定性
+RUN npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000 && \
+    npm ci --prefer-offline --no-audit
 
 # 构建阶段
 FROM base AS builder
